@@ -45,7 +45,7 @@ class World:
         self._r = 0
         self._y = 0
         self._e = 0
-        self._actor = np.array([1, 1])  # actor's position on the map
+        self._actor = np.array([0, 0])  # actor's position on the map in terms of matrix indices
         self._actions = ['forward', 'left', 'right', 'backward']
         self._directions = ['up', 'down', 'left', 'right']
 
@@ -84,8 +84,10 @@ class World:
             if params[0] == 'W':
                 self._set_world_size(int(params[2]), int(params[1]))
             elif params[0] == 'S':
-                self.start = np.array((int(params[1]) - 1, int(params[2]) - 1))
-                #self._actor = np.array((int(params[1]) - 1, int(params[2]) - 1))
+                self.start = np.array((self.size[0] - int(params[2]), int(params[1]) - 1))
+                self._actor = np.array((self.size[0] - int(params[2]), int(params[1]) - 1))
+                # self.start = np.array((-(int(params[2])), int(params[1]) - 1))
+                # self._actor = np.array((-(int(params[2])), int(params[1]) - 1))
             elif params[0] == 'P':
                 self._set_probability(float(params[1]), float(params[2]), float(params[3]))
             elif params[0] == 'R':
@@ -122,7 +124,7 @@ class World:
             self.p3 = p3
             self._p4 = round(1 - p1 - p2 - p3, 3)  # rounded so there's no insignificant small value like 1e-15
 
-    def move(self, dir, position=None, action=None, mode='indices'):
+    def _move(self, dir, position=None):
         """Moves the actor in the desired direction according to probability distribution
     
         Args:
@@ -130,23 +132,30 @@ class World:
             action (str): 'forward', 'left', 'right', 'backward'
             position (np.ndarray[int, int]): current position
         Returns:
-            list[[int, int], float]: new state and reward in that new state
+            list[int, int], float, float: position, reward and value in new state
         """
-        # (x,y) in the world frame is (-y, x-1) in the matrix indexing
-        if mode == 'world':
-            action = np.random.choice(self._actions, 1, p=[self.p1, self.p2, self.p3, self.p4])  # draw an action
-            movement = self._next_state(dir, action[0])
-            if any((1,1) > self._actor + movement) or ((self._actor + movement)[1] > self.size[0]) or ((self._actor + movement)[0] > self.size[1]):  # if new position is outside the map boundaries, don't update position
-                pass
-            else:
-                self._actor += movement
-            # self._update_cost  # update the current cost of policy as well as individual states based on new (self._actor) position
-        elif mode == 'indices':
-            movement = self._next_state(dir, action)
-            if any((0, 0) > position + movement) or any(self.size <= position + movement):
-                return position
-            else:
-                return position + movement
+        # # (x,y) in the world frame is (-y, x-1) in the matrix indexing
+        # if mode == 'world':
+        #     action = np.random.choice(self._actions, 1, p=[self.p1, self.p2, self.p3, self.p4])  # draw an action
+        #     movement = self._next_state(dir, action[0])
+        #     if any((1,1) > self._actor + movement) or ((self._actor + movement)[1] > self.size[0]) or ((self._actor + movement)[0] > self.size[1]):  # if new position is outside the map boundaries, don't update position
+        #         pass
+        #     else:
+        #         self._actor += movement
+            
+        # self._update_cost  # update the current cost of policy as well as individual states based on new (self._actor) position
+
+        action = np.random.choice(self._actions, 1, p=[self.p1, self.p2, self.p3, self.p4])  # draw an action with given probabilities ['forward', 'backward', 'left', 'right']
+        movement = self._next_state(dir, action)
+        if any((0, 0) > position + movement) or any(self.size <= position + movement):
+            new_state = self.get_state(position)
+            return position, new_state.reward, new_state.value
+        else:
+            new_state = self.get_state(position + movement)
+            if new_state.type == 'forbidden':
+                new_state = self.get_state(position)
+                return position, new_state.reward, new_state.value
+            return position + movement, new_state.reward, new_state.value
 
     def _next_state(self, desired, action, mode='indices'):
         """Says where to move based on orientation and action
@@ -154,7 +163,7 @@ class World:
         Args:
             desired (str): desired movement: up, down, left, right
             action (str): type of movement: forward, backward, left, right
-            mode (str, optional): world or indices. Defaults to 'indices'.
+            mode (str, optional): 'world' or 'indices'. Defaults to 'indices'.
 
         Returns:
             _type_: _description_
@@ -243,6 +252,42 @@ class World:
                 else:
                     return LEFT_I # 'left'
 
+    def update_Q(self):
+        pos = self._actor  # current position of the actor
+        state = self.get_state(pos)  # current state
+        if state.type == "terminal":
+            state._nactions_taken[0] += 1
+            rhs = self.alpha(state._nactions_taken, 0) * (state.reward + self._y * state.value - state.value)
+            # state.set_values(state.value + rhs)
+            # state.set_values(self.alpha(state._nactions_taken, 0) * state.reward)
+            state.set_values(state.reward)
+            state.value = np.max(state.values)
+            self._actor = self.start
+            return True
+        values = state.values  # current values of the state
+        max_val = np.max(values)  # maximum value
+        max_moves = [i for i, val in enumerate(values) if val == max_val]  # indices of maximum values in the state
+        move = np.random.choice([np.random.choice(max_moves), np.random.choice([0, 1, 2, 3])], p=[1 - self._e, self._e])  # eploitation / exploration
+        # move = np.random.choice(max_moves)  # policy - if values are the same, choose random
+        state._nactions_taken[move] += 1
+        dir = self._directions[move]  # get move direction as a string
+        new_pos, new_reward, new_value = self._move(dir=dir, position=pos)  # calculate new position and reward in that position
+        self._actor = new_pos  # update actor's position
+        # rhs = self.alpha(state._nactions_taken, move) * (new_reward + self._y * new_value - state.value)  # value of right-hand-side of the equation
+        rhs = self.alpha(state._nactions_taken, move) * (state.reward + self._y * new_value - state.value)  # value of right-hand-side of the equation
+        state.values[move] += rhs
+        state.value = np.max(state.values)
+        return False
+
+    def alpha(self, N, move):
+        # return .5
+        return 1/N[move]
+
+    def print_q(self):
+        for index in np.ndindex(self.size):
+            state = self.get_state(index)
+            print(f"{self._cast_index(index)}\t up:{state.values[0]};\t down:{state.values[1]};\t left:{state.values[2]};\t right:{state.values[3]}")
+
     def update_values(self, show=False):
         """Method used to update values of inidivudal states in the MDP Value Iteration solver.
 
@@ -252,9 +297,7 @@ class World:
         Returns:
             float: Maximum value error.
         """
-        # states_copy = copy.deepcopy(self.states)  # deep copy of the states, instead create a list with new values and update at the end of the loop
         dv = []
-        new_v = []
         actions = [0 for _ in range(4)]  # array to hold actions
         next_states = [0 for _ in range(4)]  # array to hold next states
         states_values = []
@@ -263,7 +306,6 @@ class World:
             if state.type in ('terminal', 'forbidden', 'special'):
                 v0 = state.value
                 v = state.reward
-                # new_v.append(state.reward, 'o'))
                 dv.append(np.abs(v0 - v))
                 states_values.append([v for _ in range(4)])
                 continue
@@ -285,17 +327,12 @@ class World:
                         next_states[i] = index + action  # next states in order: forward, left, right, backward (p1, p2, p3, p4)
                 cost = self.bellman_rule(index=index, surrounding_indices=next_states)
                 values.append(cost)  # calculate value for new state
-            # take action with maximum value and update the state's value
-            # id = np.argmax(values)  # direction of the best move
             v = np.max(values)  # value of the utility in the direction of the best move
-            # new_v.append((v, self._cast_policy(id)))
             states_values.append(values)
             dv.append(np.abs(v0 - v))
         for i, state in enumerate(self.states.flatten()):
-            # state.value = new_v[i][0]
             state.values = states_values[i]
             state.value = np.max(states_values[i])
-            # state.policy = new_v[i][1]
         if show:
             self.show_world(toshow='value')
         return np.max(dv)

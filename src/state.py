@@ -18,6 +18,15 @@ class State:
         self._statevalues = [0]  # biggest historical values of the state
         self._policies = ['^', 'v', '<', '>']
         self._policy = 'o'
+        self._nactions_taken = [0, 0, 0, 0]  # number of actions taken in this state ['up', 'down', 'left', 'right']
+
+    def set_values(self, val):
+        """Set all values to one value
+
+        Args:
+            val (float): value
+        """
+        self._values = [val for _ in range(len(self._values))]
 
     @property
     def reward(self):

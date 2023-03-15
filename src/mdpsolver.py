@@ -42,8 +42,8 @@ class MDPSolver:
     def show_graph(self):
         self.world.show_graph()
 
-solver = MDPSolver(config='map_lecture.txt')
-solver.solve(iter=100, delta=0.0001, show=True)
+solver = MDPSolver(config='q_test.txt')
+solver.solve(iter=100, delta=0.0000001, show=False)
 solver.show(decimal=4)
 solver.show_policy()
-solver.show_graph()
+# solver.show_graph()
