@@ -6,16 +6,18 @@ class State:
         """Initialize Field object.
 
         Args:
-            type (str, optional): Type of the field, can be: 'start', 'normal', 'special', 'forbidden', 'terminal'. Defaults to 'normal'.
+            type (str, optional): Type of the field, can be: 'normal', 'special', 'forbidden', 'terminal'. Defaults to 'normal'.
         """
-        self._types = ['start', 'normal', 'special', 'forbidden', 'terminal']
+        self._types = ['normal', 'special', 'forbidden', 'terminal']
         self._actions = ['up', 'down', 'left', 'right']
         self._type = type
         self._reward = reward
         self._value = 0
+        self._values = [0, 0, 0, 0]  # up down left right
         self._action = None
-        self._statevalues = [0]
-
+        self._statevalues = [0]  # biggest historical values of the state
+        self._policies = ['^', 'v', '<', '>']
+        self._policy = 'o'
 
     @property
     def reward(self):
@@ -28,11 +30,24 @@ class State:
     @property
     def value(self):
         return self._value
+        # return np.max(self._values)
     
     @property
     def action(self):
         return self._action
     
+    @property
+    def statevalues(self):
+        return self._statevalues
+    
+    @property
+    def policy(self):
+        return self._policy
+
+    @property
+    def values(self):
+        return self._values
+
     @reward.setter
     def reward(self, val):
         self._reward = val
@@ -51,3 +66,12 @@ class State:
     def action(self, val):
         if val in self._actions:
             self._action = val
+
+    @policy.setter
+    def policy(self, val):
+        if val in self._policies:
+            self._policy = val
+
+    @values.setter
+    def values(self, vallist):
+        self._values = vallist

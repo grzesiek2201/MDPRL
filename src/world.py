@@ -3,6 +3,7 @@ import numpy as np
 from pathlib import Path
 import re
 import copy
+import matplotlib.pyplot as plt
 
 
 UP = np.array([0, 1])
@@ -13,7 +14,13 @@ UP_I = np.array([-1, 0])
 LEFT_I = np.array([0, -1])
 RIGHT_I = np.array([0, 1])
 DOWN_I = np.array([1, 0])
+UP_SYMBOL = '^'
+LEFT_SYMBOL = '<'
+RIGHT_SYMBOL = '>'
+DOWN_SYMBOL = 'v'
+
 VALUE_DECIMAL_PLACES = 2
+
 
 class World:
     def __init__(self, config='world.txt'):
@@ -49,7 +56,7 @@ class World:
         self._states = states.reshape(self.size[0], self.size[1])
 
     def _init_world(self, filename):
-        """Read file and initiate the world with given config
+        """Read file and initiate the world with given config.
 
         W (obowiązkowy) określa rozmiar świata: poziomy i pionowy (2xINT),
         S (opcjonalny) określa współrzędne stanu startowego (2xINT),
@@ -62,7 +69,7 @@ class World:
         F (wielokrotny - może wystąpić 0 lub więcej razy) definiuje pojedynczy stan zabroniony: dwie współrzędne (2xINT).
 
         Args:
-            filename (str): config file name
+            filename (str): config file name in the /config directory
         """
         try:
             path = list(Path(__file__).parent.parent.glob(f"config/{filename}"))[0]
@@ -92,13 +99,17 @@ class World:
             elif params[0] == 'E':
                 self._e = float(params[1])
             elif params[0] == 'T':
-                self._states[-(int(params[2])), int(params[1]) - 1].value = float(params[3])
+                self._states[-(int(params[2])), int(params[1]) - 1]._value = 0
                 self._states[-(int(params[2])), int(params[1]) - 1].type = 'terminal'
+                self._states[-(int(params[2])), int(params[1]) - 1].reward = float(params[3])
             elif params[0] == 'B':
-                self._states[-(int(params[2])), int(params[1]) - 1].value = float(params[3])
+                self._states[-(int(params[2])), int(params[1]) - 1]._value = 0
                 self._states[-(int(params[2])), int(params[1]) - 1].type = 'special'
+                self._states[-(int(params[2])), int(params[1]) - 1].reward = float(params[3])
             elif params[0] == 'F':
                 self._states[-(int(params[2])), int(params[1]) - 1].type = 'forbidden'
+                self._states[-(int(params[2])), int(params[1]) - 1]._value = 0
+                self._states[-(int(params[2])), int(params[1]) - 1].reward = 0
 
     def _set_world_size(self, n, m):
         self.size = (n, m)
@@ -119,7 +130,7 @@ class World:
             action (str): 'forward', 'left', 'right', 'backward'
             position (np.ndarray[int, int]): current position
         Returns:
-            list[int, int]: new state
+            list[[int, int], float]: new state and reward in that new state
         """
         # (x,y) in the world frame is (-y, x-1) in the matrix indexing
         if mode == 'world':
@@ -141,8 +152,8 @@ class World:
         """Says where to move based on orientation and action
 
         Args:
-            desired (_type_): desired movement: up, down, left, right
-            action (_type_): type of movement: forward, backward, left, right
+            desired (str): desired movement: up, down, left, right
+            action (str): type of movement: forward, backward, left, right
             mode (str, optional): world or indices. Defaults to 'indices'.
 
         Returns:
@@ -232,31 +243,29 @@ class World:
                 else:
                     return LEFT_I # 'left'
 
-    def show_world(self, toshow='type', decimal=2):
-        """Prints world in string format
+    def update_values(self, show=False):
+        """Method used to update values of inidivudal states in the MDP Value Iteration solver.
 
         Args:
-            toshow (str, optional): 'type', 'value', 'reward'. Defaults to 'type'.
-            decimal (int, optional): numer of printed values decimal places
-        """
-        if toshow == 'type':
-            world = np.array([state.type for state in self._states.flatten()]).reshape(self.size[0], self.size[1])
-        if toshow == 'reward':
-            world = np.array([state.reward for state in self._states.flatten()]).reshape(self.size[0], self.size[1])
-        if toshow == 'value':
-            world = np.array([round(state.value, decimal) for state in self._states.flatten()]).reshape(self.size[0], self.size[1])
-        print(world)
+            show (bool, optional): Show iterative values. Defaults to False.
 
-    def update_values(self, show=False):
+        Returns:
+            float: Maximum value error.
+        """
         # states_copy = copy.deepcopy(self.states)  # deep copy of the states, instead create a list with new values and update at the end of the loop
         dv = []
         new_v = []
-        actions = [0 for _ in range(4)]
-        next_states = [0 for _ in range(4)]
+        actions = [0 for _ in range(4)]  # array to hold actions
+        next_states = [0 for _ in range(4)]  # array to hold next states
+        states_values = []
         for index in np.ndindex(self.size):  # take every state
             state = self.get_state(index)  # real state
             if state.type in ('terminal', 'forbidden', 'special'):
-                new_v.append(state.value)
+                v0 = state.value
+                v = state.reward
+                # new_v.append(state.reward, 'o'))
+                dv.append(np.abs(v0 - v))
+                states_values.append([v for _ in range(4)])
                 continue
             v0 = state.value
             values = []
@@ -273,30 +282,102 @@ class World:
                             self.get_state(index + action).type == 'forbidden'):
                         next_states[i] = index
                     else:
-                        next_states[i] = index + action
-                values.append(self.bellman_rule(surrounding_indices=next_states))  # calculate value for new state
+                        next_states[i] = index + action  # next states in order: forward, left, right, backward (p1, p2, p3, p4)
+                cost = self.bellman_rule(index=index, surrounding_indices=next_states)
+                values.append(cost)  # calculate value for new state
             # take action with maximum value and update the state's value
-            v = np.max(values)
-            new_v.append(v)
+            # id = np.argmax(values)  # direction of the best move
+            v = np.max(values)  # value of the utility in the direction of the best move
+            # new_v.append((v, self._cast_policy(id)))
+            states_values.append(values)
             dv.append(np.abs(v0 - v))
         for i, state in enumerate(self.states.flatten()):
-            state.value = new_v[i]
+            # state.value = new_v[i][0]
+            state.values = states_values[i]
+            state.value = np.max(states_values[i])
+            # state.policy = new_v[i][1]
         if show:
             self.show_world(toshow='value')
         return np.max(dv)
 
-    def bellman_rule(self, surrounding_indices):
+    def bellman_rule(self, index, surrounding_indices):
+
         probabilities = [self.p1, self.p2, self.p3, self.p4]
-        rewards = [self.get_state(index).reward for index in surrounding_indices]
+        # rewards = [self.get_state(index).reward for index in surrounding_indices]
         values = [self.get_state(index).value for index in surrounding_indices]
-        new_v = np.sum([probability * ( reward + self._y * value ) for probability, reward, value in zip(probabilities, rewards, values)])
-        # new_v = round(new_v, VALUE_DECIMAL_PLACES)
+        reward = self.get_state(index).reward
+        # new_v = np.sum([probability * ( reward + self._y * value ) for probability, reward, value in zip(probabilities, rewards, values)])
+        new_v = np.sum([probability * value for probability, value in zip(probabilities, values)])
+        new_v *= self._y
+        new_v += reward
         return new_v
 
     def get_state(self, indices, state=None):
         if state is None:
             state = self.states
         return state[indices[0], indices[1]]
+
+    def show_world(self, toshow='type', decimal=2):
+        """Prints world in string format
+
+        Args:
+            toshow (str, optional): 'type', 'value', 'reward'. Defaults to 'type'.
+            decimal (int, optional): numer of printed values decimal places
+        """
+        if toshow == 'type':
+            world = np.array([state.type for state in self._states.flatten()]).reshape(self.size[0], self.size[1])
+        if toshow == 'reward':
+            world = np.array([state.reward for state in self._states.flatten()]).reshape(self.size[0], self.size[1])
+        if toshow == 'value':
+            world = np.array([round(state.value, decimal) for state in self._states.flatten()]).reshape(self.size[0], self.size[1])
+        print(world)
+
+    def show_policy(self):
+        # policy = np.array([state.policy for state in self.states.flatten()]).reshape(self.size[0], self.size[1])
+        policy = np.array([self._cast_policy(np.argmax(state.values), state=state) for state in self.states.flatten()]).reshape(self.size[0], self.size[1])
+        print(policy)
+        
+    def show_graph(self):
+        plt.figure(figsize=(6, 6))
+        for state in self.states.flatten():
+            plt.plot(state.statevalues)
+        plt.legend([self._cast_index(index) for index in np.ndindex(self.size)])
+        plt.grid()
+        plt.show()
+
+    def _cast_policy(self, val, state=None):
+        """Casts number (0,1,2,3 == up,down,left,right) to direction symbol.
+
+        Args:
+            val (int): number of direction
+
+        Returns:
+            str: direction symbol
+        """
+        if state:
+            if state.type == 'normal':
+                return self._cast_policy(val)
+            else:
+                return 'o'
+        if val == 0:
+            return UP_SYMBOL
+        elif val == 1:
+            return DOWN_SYMBOL
+        elif val == 2:
+            return LEFT_SYMBOL
+        elif val == 3:
+            return RIGHT_SYMBOL
+        else:
+            return 'o'
+
+    def _cast_index(self, index):
+        return index[1] + 1, self.size[0] - index[0]
+
+    def _take_action(self, pos, action):
+        if any((0, 0) > pos + action) or any(self.size <= pos + action):
+            return pos
+        else:
+            return pos + action
 
     @property
     def p1(self):
