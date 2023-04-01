@@ -1,4 +1,4 @@
-"# MDPRL" 
+# MDPRL
 
 Required libraries are described in the 'requirements.txt' file.
 
