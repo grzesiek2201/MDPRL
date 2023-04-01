@@ -13,3 +13,9 @@ To run either of those:
 <code>python qsolver.py</code>
 
 Optinal arguments: y(float) e(float) iter(int) in this order. 
+
+To plot the state values with matplotlib:
+
+in mdpsolver.py uncomment line 69
+
+in qsolver.py uncomment line 71
