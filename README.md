@@ -8,8 +8,8 @@ There are two programs to run, mdpsolver.py (solving the MDP task) and qsolver.p
 
 To run either of those:
 
-python mdpsolver.py 
+<code>python mdpsolver.py</code> 
 
-python qsolver.py
+<code>python qsolver.py</code>
 
 Optinal arguments: y(float) e(float) iter(int) in this order. 
