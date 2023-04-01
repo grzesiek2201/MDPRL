@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import copy
 import matplotlib.pyplot as plt
+import random
 
 
 UP = np.array([0, 1])
@@ -23,7 +24,7 @@ VALUE_DECIMAL_PLACES = 2
 
 
 class World:
-    def __init__(self, config='world.txt'):
+    def __init__(self, config='world.txt', y=None, e=None):
         """_summary_
 
         Args:
@@ -36,6 +37,9 @@ class World:
             y (float): discount value
             config (str): path to world config file
         """
+        if y is not None:
+            if not 0 <= y <= 1:
+                raise Exception(f"Wrong gamma value: {y}")
         self._size = (0, 0)
         self._states = []  # initialize states
         self._p1 = 0
@@ -43,17 +47,42 @@ class World:
         self._p3 = 0
         self._p4 = 0
         self._r = 0
-        self._y = 0
-        self._e = 0
+        self._y = y
+        self._e = e
         self._actor = np.array([0, 0])  # actor's position on the map in terms of matrix indices
-        self._actions = ['forward', 'left', 'right', 'backward']
-        self._directions = ['up', 'down', 'left', 'right']
+        self._actions = [0, 1, 2, 3] # ['forward', 'left', 'right', 'backward']
+        self._directions = [0, 1, 2, 3]  # ['up', 'down', 'left', 'right']
 
-        self._init_world(filename=config)
+        checksum = self._init_world(filename=config)
+
+        self._reinit_world(checksum)
 
     def _init_states(self):
         states = np.array([State() for _ in range(self.size[0] * self.size[1])])
         self._states = states.reshape(self.size[0], self.size[1])
+
+    def _reinit_world(self, checksum):
+
+        if not checksum[0]:
+            raise Exception("World size not provided.")
+
+        if not checksum[1]:
+            raise Exception("Probabilities not provided.")
+
+        if not checksum[2]:
+            raise Exception("Rewards not provided.")
+
+        # if start position not initialized
+        if not checksum[3]:
+            self.start = np.array(random.randint(0, self.size[0]), random.randint(0, self.size[1]))
+            self._actor = self.start
+
+        if self._y is None:
+            raise Exception("Gamma not set.")
+
+        if self._e is None:
+            raise Exception("Epsilon not set.")
+
 
     def _init_world(self, filename):
         """Read file and initiate the world with given config.
@@ -71,6 +100,7 @@ class World:
         Args:
             filename (str): config file name in the /config directory
         """
+        checksum = [False] * 4
         try:
             path = list(Path(__file__).parent.parent.glob(f"config/{filename}"))[0]
             with open(path, 'r') as file:
@@ -83,35 +113,45 @@ class World:
             params = re.split(r'[\n\s]', line)
             if params[0] == 'W':
                 self._set_world_size(int(params[2]), int(params[1]))
+                checksum[0] = True
             elif params[0] == 'S':
                 self.start = np.array((self.size[0] - int(params[2]), int(params[1]) - 1))
                 self._actor = np.array((self.size[0] - int(params[2]), int(params[1]) - 1))
-                # self.start = np.array((-(int(params[2])), int(params[1]) - 1))
-                # self._actor = np.array((-(int(params[2])), int(params[1]) - 1))
+                checksum[3] = True
             elif params[0] == 'P':
                 self._set_probability(float(params[1]), float(params[2]), float(params[3]))
+                checksum[1] = True
             elif params[0] == 'R':
+                if not checksum[0]:
+                    raise Exception("World size not provided.")
                 self._r = float(params[1])
                 # update reward values
                 for state in self._states.flatten():
-                    if state.type == 'normal':
+                    if state.type == 'N':
                         state.reward = self._r
+                checksum[2] = True
             elif params[0] == 'G':
-                self.y = float(params[1])
+                if self._y is None:
+                    self.y = float(params[1])
+                if not 0 <= self._y <= 1:
+                    raise Exception(f"Wrong gamma value: {self._y}") 
             elif params[0] == 'E':
-                self._e = float(params[1])
+                if self._e is None:
+                    self._e = float(params[1])
             elif params[0] == 'T':
                 self._states[-(int(params[2])), int(params[1]) - 1]._value = 0
-                self._states[-(int(params[2])), int(params[1]) - 1].type = 'terminal'
+                self._states[-(int(params[2])), int(params[1]) - 1].type = 'T'
                 self._states[-(int(params[2])), int(params[1]) - 1].reward = float(params[3])
             elif params[0] == 'B':
                 self._states[-(int(params[2])), int(params[1]) - 1]._value = 0
-                self._states[-(int(params[2])), int(params[1]) - 1].type = 'special'
+                self._states[-(int(params[2])), int(params[1]) - 1].type = 'S'
                 self._states[-(int(params[2])), int(params[1]) - 1].reward = float(params[3])
             elif params[0] == 'F':
-                self._states[-(int(params[2])), int(params[1]) - 1].type = 'forbidden'
+                self._states[-(int(params[2])), int(params[1]) - 1].type = 'F'
                 self._states[-(int(params[2])), int(params[1]) - 1]._value = 0
                 self._states[-(int(params[2])), int(params[1]) - 1].reward = 0
+
+        return checksum
 
     def _set_world_size(self, n, m):
         self.size = (n, m)
@@ -123,164 +163,116 @@ class World:
             self.p2 = p2
             self.p3 = p3
             self._p4 = round(1 - p1 - p2 - p3, 3)  # rounded so there's no insignificant small value like 1e-15
+            return
+        raise Exception("Probabilities sum up to more than 1.")
 
     def _move(self, dir, position=None):
         """Moves the actor in the desired direction according to probability distribution
     
         Args:
-            dir (str): 'up', 'left', 'right', 'down'
-            action (str): 'forward', 'left', 'right', 'backward'
+            dir (int): 0, 1, 2, 3 ('up', 'left', 'right', 'down')
+            action (int): 0, 1, 2, 3 ('forward', 'left', 'right', 'backward')
             position (np.ndarray[int, int]): current position
         Returns:
-            list[int, int], float, float: position, reward and value in new state
+            list[int, int], float: position, value in new state
         """
-        # # (x,y) in the world frame is (-y, x-1) in the matrix indexing
-        # if mode == 'world':
-        #     action = np.random.choice(self._actions, 1, p=[self.p1, self.p2, self.p3, self.p4])  # draw an action
-        #     movement = self._next_state(dir, action[0])
-        #     if any((1,1) > self._actor + movement) or ((self._actor + movement)[1] > self.size[0]) or ((self._actor + movement)[0] > self.size[1]):  # if new position is outside the map boundaries, don't update position
-        #         pass
-        #     else:
-        #         self._actor += movement
-            
-        # self._update_cost  # update the current cost of policy as well as individual states based on new (self._actor) position
-
-        action = np.random.choice(self._actions, 1, p=[self.p1, self.p2, self.p3, self.p4])  # draw an action with given probabilities ['forward', 'backward', 'left', 'right']
-        movement = self._next_state(dir, action)
-        if any((0, 0) > position + movement) or any(self.size <= position + movement):
-            new_state = self.get_state(position)
-            return position, new_state.reward, new_state.value
+        prob = random.random()
+        if prob < self.p1:
+            action = 0
+        elif prob < self.p1 + self.p2:
+            action = 1
+        elif prob < self.p1 + self.p2 + self.p3:
+            action = 2
         else:
-            new_state = self.get_state(position + movement)
-            if new_state.type == 'forbidden':
+            action = 3
+        movement = self._next_state(dir, action)
+        next_pos = position + movement
+        if any((0, 0) > next_pos) or any(self.size <= next_pos):
+            new_state = self.get_state(position)
+            return position, new_state.value
+        else:
+            new_state = self.get_state(next_pos)
+            if new_state.type == 'F':
                 new_state = self.get_state(position)
-                return position, new_state.reward, new_state.value
-            return position + movement, new_state.reward, new_state.value
+                return position, new_state.value
+            return next_pos, new_state.value
 
-    def _next_state(self, desired, action, mode='indices'):
+    def _next_state(self, desired, action):
         """Says where to move based on orientation and action
 
         Args:
-            desired (str): desired movement: up, down, left, right
-            action (str): type of movement: forward, backward, left, right
-            mode (str, optional): 'world' or 'indices'. Defaults to 'indices'.
+            desired (int): desired movement: [0, 1, 2, 3] (up, down, left, right)
+            action (int): type of movement: [0, 1, 2, 3] (forward, left, right, backward)
 
         Returns:
-            _type_: _description_
+            numpy.ndarray: list of indices to add to current position
         """
-        if mode == 'world':
-            # want to go up
-            if desired == 'up':
-                if action == 'forward':
-                    return UP  # 'up'
-                elif action == 'left':
-                    return LEFT  # 'left'
-                elif action == 'right':
-                    return RIGHT  # 'right'
-                else:
-                    return DOWN  # 'down'
-            # want to go down
-            elif desired == 'down':
-                if action == 'forward':
-                    return DOWN # 'down'
-                elif action == 'left':
-                    return RIGHT # 'right'
-                elif action == 'right':
-                    return LEFT # 'left'
-                else:
-                    return UP # 'up'
-            # want to go left
-            elif desired == 'left':
-                if action == 'forward':
-                    return LEFT # 'left'
-                elif action == 'left':
-                    return DOWN # 'down'
-                elif action == 'right':
-                    return UP # 'up'
-                else:
-                    return RIGHT # 'right'
-            # want to go right
-            elif desired == 'right':
-                if action == 'forward':
-                    return RIGHT # 'right'
-                elif action == 'left':
-                    return UP # 'up'
-                elif action == 'right':
-                    return DOWN # 'down'
-                else:
-                    return LEFT # 'left'
-        
-        elif mode == 'indices':
-            # want to go up
-            if desired == 'up':
-                if action == 'forward':
-                    return UP_I  # 'up'
-                elif action == 'left':
-                    return LEFT_I  # 'left'
-                elif action == 'right':
-                    return RIGHT_I  # 'right'
-                else:
-                    return DOWN_I  # 'down'
-            # want to go down
-            elif desired == 'down':
-                if action == 'forward':
-                    return DOWN_I # 'down'
-                elif action == 'left':
-                    return RIGHT_I # 'right'
-                elif action == 'right':
-                    return LEFT_I # 'left'
-                else:
-                    return UP_I # 'up'
-            # want to go left
-            elif desired == 'left':
-                if action == 'forward':
-                    return LEFT_I # 'left'
-                elif action == 'left':
-                    return DOWN_I # 'down'
-                elif action == 'right':
-                    return UP_I # 'up'
-                else:
-                    return RIGHT_I # 'right'
-            # want to go right
-            elif desired == 'right':
-                if action == 'forward':
-                    return RIGHT_I # 'right'
-                elif action == 'left':
-                    return UP_I # 'up'
-                elif action == 'right':
-                    return DOWN_I # 'down'
-                else:
-                    return LEFT_I # 'left'
+        # want to go up
+        if desired == 0:
+            if action == 0:
+                return UP_I  # 'up'
+            elif action == 1:
+                return LEFT_I  # 'left'
+            elif action == 2:
+                return RIGHT_I  # 'right'
+            else:
+                return DOWN_I  # 'down'
+        # want to go down
+        elif desired == 1:
+            if action == 0:
+                return DOWN_I # 'down'
+            elif action == 1:
+                return RIGHT_I # 'right'
+            elif action == 2:
+                return LEFT_I # 'left'
+            else:
+                return UP_I # 'up'
+        # want to go left
+        elif desired == 2:
+            if action == 0:
+                return LEFT_I # 'left'
+            elif action == 1:
+                return DOWN_I # 'down'
+            elif action == 2:
+                return UP_I # 'up'
+            else:
+                return RIGHT_I # 'right'
+        # want to go right
+        elif desired == 3:
+            if action == 0:
+                return RIGHT_I # 'right'
+            elif action == 1:
+                return UP_I # 'up'
+            elif action == 2:
+                return DOWN_I # 'down'
+            else:
+                return LEFT_I # 'left'
 
     def update_Q(self):
         pos = self._actor  # current position of the actor
         state = self.get_state(pos)  # current state
-        if state.type == "terminal":
+        if state.type == 'T':
             state._nactions_taken[0] += 1
-            rhs = self.alpha(state._nactions_taken, 0) * (state.reward + self._y * state.value - state.value)
-            # state.set_values(state.value + rhs)
-            # state.set_values(self.alpha(state._nactions_taken, 0) * state.reward)
             state.set_values(state.reward)
             state.value = np.max(state.values)
             self._actor = self.start
             return True
-        values = state.values  # current values of the state
-        max_val = np.max(values)  # maximum value
-        max_moves = [i for i, val in enumerate(values) if val == max_val]  # indices of maximum values in the state
-        move = np.random.choice([np.random.choice(max_moves), np.random.choice([0, 1, 2, 3])], p=[1 - self._e, self._e])  # eploitation / exploration
-        # move = np.random.choice(max_moves)  # policy - if values are the same, choose random
+        max_move = np.argmax(state.values)
+        prob = random.random()
+        if prob < self._e:
+            move = random.randint(0, 3)
+        else:
+            move = max_move
         state._nactions_taken[move] += 1
         dir = self._directions[move]  # get move direction as a string
-        new_pos, new_reward, new_value = self._move(dir=dir, position=pos)  # calculate new position and reward in that position
+        new_pos, new_value = self._move(dir=dir, position=pos)  # calculate new position and reward in that position
         self._actor = new_pos  # update actor's position
-        # rhs = self.alpha(state._nactions_taken, move) * (new_reward + self._y * new_value - state.value)  # value of right-hand-side of the equation
-        rhs = self.alpha(state._nactions_taken, move) * (state.reward + self._y * new_value - state.value)  # value of right-hand-side of the equation
+        rhs = 1/state._nactions_taken[move] * (state.reward + self._y * new_value - state.value)  # value of right-hand-side of the equation
         state.values[move] += rhs
         state.value = np.max(state.values)
         return False
 
     def alpha(self, N, move):
-        # return .5
         return 1/N[move]
 
     def print_q(self):
@@ -303,7 +295,7 @@ class World:
         states_values = []
         for index in np.ndindex(self.size):  # take every state
             state = self.get_state(index)  # real state
-            if state.type in ('terminal', 'forbidden', 'special'):
+            if state.type in ('T', 'F'):
                 v0 = state.value
                 v = state.reward
                 dv.append(np.abs(v0 - v))
@@ -313,15 +305,15 @@ class World:
             values = []
 
             for direction in self._directions:  # for each action - up down left right
-                actions[0] = self._next_state(direction, 'forward', mode='indices')  # go forward in selected direction
-                actions[1] = self._next_state(direction, 'left', mode='indices')
-                actions[2] = self._next_state(direction, 'right', mode='indices')
-                actions[3] = self._next_state(direction, 'backward', mode='indices')
+                actions[0] = self._next_state(direction, 0)  # go forward in selected direction
+                actions[1] = self._next_state(direction, 1)
+                actions[2] = self._next_state(direction, 2)
+                actions[3] = self._next_state(direction, 3)
                 # check if actions are legal and calculate next state for each action
                 for i, action in enumerate(actions):
                     if (any((0, 0) > index + action) or 
                             any(self.size <= index + action) or 
-                            self.get_state(index + action).type == 'forbidden'):
+                            self.get_state(index + action).type == 'F'):
                         next_states[i] = index
                     else:
                         next_states[i] = index + action  # next states in order: forward, left, right, backward (p1, p2, p3, p4)
@@ -340,10 +332,8 @@ class World:
     def bellman_rule(self, index, surrounding_indices):
 
         probabilities = [self.p1, self.p2, self.p3, self.p4]
-        # rewards = [self.get_state(index).reward for index in surrounding_indices]
         values = [self.get_state(index).value for index in surrounding_indices]
         reward = self.get_state(index).reward
-        # new_v = np.sum([probability * ( reward + self._y * value ) for probability, reward, value in zip(probabilities, rewards, values)])
         new_v = np.sum([probability * value for probability, value in zip(probabilities, values)])
         new_v *= self._y
         new_v += reward
@@ -373,14 +363,6 @@ class World:
         # policy = np.array([state.policy for state in self.states.flatten()]).reshape(self.size[0], self.size[1])
         policy = np.array([self._cast_policy(np.argmax(state.values), state=state) for state in self.states.flatten()]).reshape(self.size[0], self.size[1])
         print(policy)
-        
-    def show_graph(self):
-        plt.figure(figsize=(6, 6))
-        for state in self.states.flatten():
-            plt.plot(state.statevalues)
-        plt.legend([self._cast_index(index) for index in np.ndindex(self.size)])
-        plt.grid()
-        plt.show()
 
     def _cast_policy(self, val, state=None):
         """Casts number (0,1,2,3 == up,down,left,right) to direction symbol.
@@ -392,7 +374,7 @@ class World:
             str: direction symbol
         """
         if state:
-            if state.type == 'normal':
+            if state.type in ['N', 'S']:
                 return self._cast_policy(val)
             else:
                 return 'o'
@@ -476,5 +458,4 @@ class World:
 
     @y.setter
     def y(self, val):
-        if 0 <= val <= 1:
-            self._y = val
+        self._y = val

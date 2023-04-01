@@ -1,22 +1,17 @@
-from enum import Enum
-
+import random
 
 class State:
-    def __init__(self, type='normal', reward=0):
+    def __init__(self, type='N', reward=0):
         """Initialize Field object.
 
         Args:
             type (str, optional): Type of the field, can be: 'normal', 'special', 'forbidden', 'terminal'. Defaults to 'normal'.
         """
-        self._types = ['normal', 'special', 'forbidden', 'terminal']
-        self._actions = ['up', 'down', 'left', 'right']
         self._type = type
         self._reward = reward
-        self._value = 0
+        self._value = 0.0
+        # self._value = random.random() * 10
         self._values = [0, 0, 0, 0]  # up down left right
-        self._action = None
-        self._statevalues = [0]  # biggest historical values of the state
-        self._policies = ['^', 'v', '<', '>']
         self._policy = 'o'
         self._nactions_taken = [0, 0, 0, 0]  # number of actions taken in this state ['up', 'down', 'left', 'right']
 
@@ -26,7 +21,8 @@ class State:
         Args:
             val (float): value
         """
-        self._values = [val for _ in range(len(self._values))]
+        # self._values = [val for _ in range(len(self._values))]
+        self._values = [val for _ in range(4)]
 
     @property
     def reward(self):
@@ -63,23 +59,19 @@ class State:
 
     @type.setter
     def type(self, val):
-        if val in self._types:
-            self._type = val
+        self._type = val
 
     @value.setter
     def value(self, val):
-        self._statevalues.append(val)
         self._value = val
 
     @value.setter
     def action(self, val):
-        if val in self._actions:
-            self._action = val
+        self._action = val
 
     @policy.setter
     def policy(self, val):
-        if val in self._policies:
-            self._policy = val
+        self._policy = val
 
     @values.setter
     def values(self, vallist):
